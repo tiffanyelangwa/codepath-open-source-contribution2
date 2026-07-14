@@ -72,10 +72,143 @@ I will consider the issue successfully resolved if:
 
 ---
 
-# Current Status
+---
 
-- Repository forked
-- Issue selected
-- README created
-- Waiting to hear back after expressing interest in the issue
-- Development environment setup
+# Environment Setup
+
+## Development Branch
+
+I created and pushed a dedicated development branch for this issue:
+
+```
+fix-issue-155-kernel-disposal
+```
+
+This branch will be used for all investigation and implementation related to Issue #155.
+
+## Setup Approach
+
+I followed the official JupyterLite development setup instructions provided in the project's `CONTRIBUTING.md` file rather than using a development container. I installed the required versions of Node.js and Python, cloned my fork of the repository, installed the project dependencies, and attempted to build the project according to the documented setup process.
+
+## Environment Setup Challenges
+
+During setup I encountered several issues that required investigation:
+
+1. Initially, the `yarn` command was unavailable because Corepack had not been enabled. I resolved this by enabling Corepack and activating Yarn 3.5.0, which matches the version specified by the repository.
+
+2. After successfully installing project dependencies, the build process failed because the `jlpm` command could not be found. The repository's build scripts call `jlpm`, but no `jlpm` executable was installed despite following the official setup instructions. I investigated the project configuration, confirmed the build scripts reference `jlpm`, inspected the installed dependencies, and verified that no `jlpm` binary had been created.
+
+Although the build environment is not yet fully operational, I completed the setup investigation and documented the issue before proceeding with source code analysis.
+
+---
+
+# Bug Reproduction
+
+## Steps to Reproduce
+
+1. Launch a JupyterLite notebook in the browser.
+
+2. Create or open an existing notebook and start a kernel.
+
+3. Perform any action that causes communication between the notebook frontend and the running kernel.
+
+4. Close the notebook while the application is still communicating with the kernel.
+
+5. Observe the browser console during notebook shutdown.
+
+## Expected Behavior
+
+The notebook should close gracefully, allowing any pending kernel communication to complete before the kernel is disposed. No errors should appear during the shutdown process.
+
+## Actual Behavior
+
+The kernel is disposed before a pending `commInfoRequest` receives a response. As a result, the pending future is cancelled and the following error appears:
+
+```
+Canceled future for comm_info_request message before replies were done
+```
+
+This indicates that the kernel shutdown sequence interrupts an asynchronous request before it completes.
+
+---
+
+# Root Cause Investigation
+
+From studying the issue report and stack trace, I believe the bug is not caused by the `commInfoRequest` itself but by the order in which shutdown operations occur.
+
+When a notebook is closed, the application begins disposing of the kernel while an asynchronous `commInfoRequest` is still waiting for a response. Because the kernel is destroyed before the request completes, the pending future is cancelled, producing the error shown in the browser console.
+
+Based on the repository structure and issue discussion, the investigation will focus on components responsible for:
+
+- Kernel lifecycle management
+- Session context shutdown
+- Kernel future disposal
+- Processing asynchronous `commInfoRequest` messages
+
+The goal is to determine where the kernel is disposed and whether outstanding requests should be allowed to finish before cleanup occurs.
+
+---
+
+# Files to Investigate
+
+Based on the issue description, stack trace, and repository structure, I expect the following files or modules to be relevant:
+
+- `packages/` – JupyterLite frontend packages responsible for notebook and kernel management.
+- `packages/server/` – Browser-side server implementation responsible for kernel communication.
+- Session context logic responsible for restarting and shutting down kernels.
+- Kernel future handling responsible for pending asynchronous requests such as `commInfoRequest`.
+
+The issue stack trace specifically references:
+
+- `future.js`
+- `default.js`
+- `sessioncontext.js`
+
+These components appear to coordinate kernel shutdown and are likely involved in disposing the kernel before pending communication has completed.
+
+---
+
+# Solution Plan (UMPIRE)
+
+## U — Understand
+
+The reported bug occurs when a notebook is closed while a `commInfoRequest` is still awaiting a response from the kernel. Instead of allowing the request to complete, the kernel is disposed immediately, causing the pending future to be cancelled.
+
+## M — Match
+
+This problem resembles asynchronous resource cleanup bugs where an object is destroyed before all pending operations have completed. The solution will likely involve modifying the shutdown sequence rather than changing the communication request itself.
+
+## P — Plan
+
+I will:
+
+1. Reproduce the issue locally.
+2. Trace the notebook shutdown sequence.
+3. Identify where the kernel disposal occurs.
+4. Determine whether pending futures should complete before cleanup.
+5. Modify the shutdown logic accordingly.
+
+## I — Implement
+
+Implementation will occur during Phase III after identifying the exact location responsible for disposing the kernel.
+
+## R — Review
+
+After implementing the fix, I will verify that:
+
+- the notebook closes normally,
+- no `commInfoRequest` cancellation error appears,
+- kernel shutdown still completes successfully, and
+- existing functionality continues to work.
+
+## E — Evaluate
+
+The fix will be considered successful if the browser console no longer reports the cancellation error while notebook shutdown remains stable and no regressions are introduced.
+
+---
+
+# Additional Investigation
+
+The issue was originally reported in 2021 and remains open, indicating that it has persisted across multiple releases of JupyterLite. While investigating the development environment, I also encountered tooling changes related to the project's build system (`jlpm`), suggesting that parts of the development workflow have evolved over time. This reinforces the importance of understanding both the current architecture and the historical evolution of the project's kernel lifecycle before implementing a fix.
+
+  
